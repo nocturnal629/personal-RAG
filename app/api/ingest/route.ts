@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/db'
-import { inngest } from '@/inngest/client'
+import { runPipeline } from '@/lib/pipeline'
 import { extractMarkdown } from '@/lib/extractors/markdown'
 import { extractPdf } from '@/lib/extractors/pdf'
+import { extractUrl } from '@/lib/extractors/url'
+
+// Allow up to 60 seconds — enough for most documents on Vercel Hobby.
+// (The old 10s limit only applies to the Edge runtime; serverless functions get 60s.)
+export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
   const contentType = req.headers.get('content-type') ?? ''
@@ -52,10 +57,11 @@ async function handleJsonBody(req: NextRequest): Promise<NextResponse> {
   if (type === 'url') {
     if (!url) return NextResponse.json({ error: 'url required for type=url' }, { status: 400 })
     sourceUrl = url
-    // Raw content will be fetched by Inngest; store the URL as placeholder so
-    // the NOT NULL constraint is satisfied.
-    rawContent = url
-    docTitle = title ?? url
+    // Fetch and extract the article text before inserting the document row.
+    // Previously this happened inside Inngest; now it runs inline.
+    const extracted = await extractUrl(url)
+    rawContent = extracted.text
+    docTitle = title || extracted.title
   }
 
   const { data: doc, error } = await db
@@ -72,9 +78,11 @@ async function handleJsonBody(req: NextRequest): Promise<NextResponse> {
 
   if (error) throw new Error(`DB insert failed: ${error.message}`)
 
-  await inngest.send({ name: 'doc/process', data: { documentId: doc.id } })
+  // Run chunk → embed → store synchronously. The browser waits, but gains a
+  // definitive success/failure response instead of having to poll for status.
+  await runPipeline(doc.id, rawContent)
 
-  return NextResponse.json({ documentId: doc.id }, { status: 202 })
+  return NextResponse.json({ documentId: doc.id })
 }
 
 // ── File upload (PDF / Markdown / Text) ───────────────────────────────────────
@@ -96,7 +104,6 @@ async function handleFileUpload(req: NextRequest): Promise<NextResponse> {
   let rawContent = ''
   let title = titleOverride ?? ''
   let sourceType: 'pdf' | 'markdown' | 'text' = 'text'
-  const metadata: Record<string, unknown> = {}
 
   if (ext === 'pdf') {
     sourceType = 'pdf'
@@ -105,12 +112,10 @@ async function handleFileUpload(req: NextRequest): Promise<NextResponse> {
     title = title || extracted.title
   } else if (ext === 'md' || ext === 'mdx') {
     sourceType = 'markdown'
-    const text = buffer.toString('utf-8')
-    const extracted = extractMarkdown(text, filename)
+    const extracted = extractMarkdown(buffer.toString('utf-8'), filename)
     rawContent = extracted.text
     title = title || extracted.title
   } else {
-    // .txt and anything else
     sourceType = 'text'
     rawContent = buffer.toString('utf-8')
     title = title || filename.replace(/\.[^.]+$/, '')
@@ -123,7 +128,6 @@ async function handleFileUpload(req: NextRequest): Promise<NextResponse> {
       title,
       source_type: sourceType,
       raw_content: rawContent,
-      metadata,
       status: 'pending',
     })
     .select('id')
@@ -131,7 +135,7 @@ async function handleFileUpload(req: NextRequest): Promise<NextResponse> {
 
   if (error) throw new Error(`DB insert failed: ${error.message}`)
 
-  await inngest.send({ name: 'doc/process', data: { documentId: doc.id } })
+  await runPipeline(doc.id, rawContent)
 
-  return NextResponse.json({ documentId: doc.id }, { status: 202 })
+  return NextResponse.json({ documentId: doc.id })
 }
