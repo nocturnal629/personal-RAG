@@ -9,7 +9,7 @@ create table documents (
   title        text        not null,
   source_type  text        not null check (source_type in ('pdf', 'markdown', 'text', 'url')),
   source_url   text,
-  raw_content  text        not null default '',  -- filled by Inngest for url/pdf types
+  raw_content  text        not null default '',  -- populated before the pipeline runs
   metadata     jsonb       not null default '{}'::jsonb,
   status       text        not null default 'pending'
                            check (status in ('pending', 'processing', 'ready', 'failed')),
@@ -26,22 +26,24 @@ create table chunks (
   chunk_index   int         not null,
   content       text        not null,
   token_count   int,
-  -- Gemini text-embedding-004 produces 768-dimensional vectors.
-  embedding     vector(768),
+  -- gemini-embedding-001 produces 3072-dimensional vectors.
+  -- halfvec stores 16-bit floats (vs 32-bit for vector) — same accuracy for
+  -- similarity search, but raises HNSW's 2000-dim ceiling to 4000.
+  embedding     halfvec(3072),
   metadata      jsonb       not null default '{}'::jsonb,
   created_at    timestamptz not null default now()
 );
 
--- HNSW (Hierarchical Navigable Small World) index for fast approximate nearest-neighbour search.
--- vector_cosine_ops = cosine distance; better than euclidean for normalized text embeddings.
-create index on chunks using hnsw (embedding vector_cosine_ops);
+-- HNSW index for fast approximate nearest-neighbour search.
+-- halfvec_cosine_ops matches the halfvec column type; supports up to 4000 dims.
+create index on chunks using hnsw (embedding halfvec_cosine_ops);
 create index on chunks (document_id);
 
 -- 4. Stored function called via supabase.rpc('match_chunks', {...}).
 --    Returns the top-k most similar chunks to a query embedding.
 --    similarity = 1 - cosine_distance (range: -1 to 1; higher is more similar).
 create or replace function match_chunks(
-  query_embedding    vector(768),
+  query_embedding    halfvec(3072),
   match_count        int     default 8,
   similarity_threshold float  default 0.5
 )

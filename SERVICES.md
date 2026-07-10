@@ -35,8 +35,8 @@ SUPABASE_SERVICE_ROLE_KEY=
 
 ## Google Gemini API (LLM + Embeddings)
 
-**What it does here:** Two things — `text-embedding-004` converts text chunks into
-768-dim vectors, and `gemini-2.5-flash` generates the chat answers.
+**What it does here:** Two things — `gemini-embedding-001` converts text chunks into
+3072-dim vectors, and `gemini-3.1-flash-lite` generates the chat answers.
 
 **Free tier:** Available via [Google AI Studio](https://aistudio.google.com/app/apikey)
 (NOT Vertex AI — that's pay-per-use). Rate limits apply per minute, but for personal
@@ -44,8 +44,8 @@ use you rarely hit them. Limits as of mid-2025:
 
 | Model | Free RPM | Free TPD |
 |-------|----------|----------|
-| gemini-2.5-flash | 10 | 250,000 tokens |
-| text-embedding-004 | 1,500 | unlimited |
+| gemini-3.1-flash-lite | 10 | 250,000 tokens |
+| gemini-embedding-001 | 1,500 | unlimited |
 
 **Where to get key:** [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
 Make sure the key is from AI Studio, not a Google Cloud / Vertex AI project.
@@ -72,6 +72,7 @@ For embeddings specifically (if you switch away from Gemini):
 
 > If you switch embedding models, you must re-run the migration with the new
 > vector dimension (e.g. `vector(1024)`) and re-embed all existing chunks.
+> Current schema uses `vector(3072)` for `gemini-embedding-001`.
 
 ---
 

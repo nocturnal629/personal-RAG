@@ -57,8 +57,6 @@ async function handleJsonBody(req: NextRequest): Promise<NextResponse> {
   if (type === 'url') {
     if (!url) return NextResponse.json({ error: 'url required for type=url' }, { status: 400 })
     sourceUrl = url
-    // Fetch and extract the article text before inserting the document row.
-    // Previously this happened inside Inngest; now it runs inline.
     const extracted = await extractUrl(url)
     rawContent = extracted.text
     docTitle = title || extracted.title

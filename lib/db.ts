@@ -4,7 +4,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  * Two clients, deliberately separated by trust boundary:
  *
  * - `supabaseAdmin()` uses the service-role key and bypasses RLS. It must only
- *   ever run on the server (API routes, Inngest functions). Importing it into a
+ *   ever run on the server (API routes). Importing it into a
  *   client component would leak the key into the browser bundle, so we throw if
  *   the env var is missing rather than silently falling back.
  * - `supabaseBrowser()` uses the public anon key and is safe in the browser.

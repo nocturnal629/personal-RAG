@@ -30,7 +30,7 @@ User question
 
 ## Part 1: Ingestion Pipeline
 
-When you upload a document, this sequence runs (mostly in Inngest, not the web server):
+When you upload a document, this sequence runs synchronously inside the `/api/ingest` route handler — the browser waits until the pipeline completes, then receives a definitive success or failure response:
 
 ### Step 1 — Extract
 
@@ -67,12 +67,12 @@ This preserves natural language boundaries as much as possible.
 
 ### Step 3 — Embed
 
-Each chunk is converted to a **vector embedding** — a list of 768 numbers that represents its meaning in "semantic space".
+Each chunk is converted to a **vector embedding** — a list of 3072 numbers that represents its meaning in "semantic space".
 
-We use Google's `text-embedding-004` model. Chunks with similar topics end up with vectors that are close together in 768-dimensional space.
+We use Google's `gemini-embedding-001` model. Chunks with similar topics end up with vectors that are close together in 768-dimensional space.
 
 ```
-"Paris is the capital of France"  →  [0.12, -0.87, 0.34, ...]   ← 768 numbers
+"Paris is the capital of France"  →  [0.12, -0.87, 0.34, ...]   ← 3072 numbers
 "The Eiffel Tower is in Paris"    →  [0.11, -0.85, 0.36, ...]   ← nearby in space
 "Python is a programming language" → [-0.43, 0.21, -0.67, ...]  ← far away
 ```
@@ -89,7 +89,7 @@ Chunks (with their embeddings) are stored in Supabase's Postgres database using 
 
 ```sql
 -- The embedding column holds the 768-dim vector
-embedding vector(768)
+embedding vector(3072)
 
 -- HNSW index for fast similarity search
 create index on chunks using hnsw (embedding vector_cosine_ops);
@@ -167,7 +167,7 @@ documents (1)
     │
     └── chunks (many)
             │
-            └── embedding vector(768)
+            └── embedding vector(3072)
 ```
 
 One document → many chunks. Deleting a document cascades to delete all its chunks (via `ON DELETE CASCADE` on the foreign key).
@@ -180,9 +180,9 @@ One document → many chunks. Deleting a document cascades to delete all its chu
 |----------|--------|-------------|-----|
 | Chunking strategy | Recursive character split | Semantic chunking | Semantic needs one embedding per sentence — too costly on free tier |
 | Vector DB | pgvector (in Postgres) | Pinecone, Qdrant | Avoids another service; Supabase already handles auth and storage |
-| LLM | Gemini 2.5 Flash | GPT-4o, Claude | Free tier is genuinely generous; 2.5 Flash is fast |
+| LLM | Gemini 3.1 Flash Lite | GPT-4o, Claude | Free tier is genuinely generous; 2.0 Flash is fast and available to new API keys |
 | Streaming | Manual SSE | Vercel AI SDK | Forces you to understand how streaming actually works |
-| Background jobs | Inngest | Vercel cron, background tasks | Vercel Hobby functions time out at 10s; embedding 100 chunks takes longer |
+| Pipeline execution | Inline (synchronous) | Inngest, QStash, Vercel Cron | Vercel Hobby serverless functions get 60s (`maxDuration = 60`), which is enough for most documents; avoids a third-party queue service |
 | Overlap | 200 chars (~50 tokens) | 0 (no overlap) | Prevents context loss at chunk boundaries |
 | Similarity threshold | 0.5 | Lower (0.3) | Lower threshold → more results but noisier; tune based on your documents |
 
@@ -205,24 +205,23 @@ The constants most worth adjusting are:
 lib/
   gemini.ts      ← Gemini API wrapper: embed() and chatStream()
   chunking.ts    ← Recursive character splitter
+  pipeline.ts    ← Orchestrates chunk → embed → store; called by ingest route
   retrieval.ts   ← Vector search + prompt assembly
-  db.ts          ← Supabase client
+  db.ts          ← Supabase client (admin + browser)
   schemas.ts     ← Zod types shared across API and UI
 
 lib/extractors/
-  pdf.ts         ← PDF → text
+  pdf.ts         ← PDF → text (pdf-parse)
   markdown.ts    ← Markdown → text (strips frontmatter)
-  url.ts         ← URL → text (Readability)
-
-inngest/
-  client.ts                      ← Inngest client
-  functions/process-document.ts  ← Full pipeline: extract→chunk→embed→store
+  url.ts         ← URL → text (Mozilla Readability, same as Firefox Reader Mode)
 
 app/api/
-  ingest/route.ts    ← POST: create document, trigger Inngest
-  documents/route.ts ← GET: list  |  DELETE: by id
-  chat/route.ts      ← POST: SSE streaming chat
-  inngest/route.ts   ← Inngest webhook handler
+  ingest/route.ts    ← POST: extract raw text, insert document row, run pipeline inline
+  documents/route.ts ← GET: list all documents  |  DELETE: by id
+  chat/route.ts      ← POST: SSE streaming chat (embed query → retrieve → generate)
+  auth/route.ts      ← POST: validate SITE_PASSWORD, set auth cookie
 
-supabase/migrations/001_init.sql ← Tables + HNSW index + match_chunks function
+middleware.ts ← Cookie gate — enforces SITE_PASSWORD on every route
+
+supabase/migrations/001_init.sql ← Tables + HNSW index + match_chunks RPC
 ```

@@ -12,9 +12,8 @@ export function middleware(request: NextRequest) {
   // No password configured → completely open
   if (!password) return NextResponse.next()
 
-  // Always allow: Inngest webhook, Next.js internals, static assets
+  // Always allow: Next.js internals, static assets, and public routes
   if (
-    pathname.startsWith('/api/inngest') ||
     pathname.startsWith('/_next') ||
     pathname === '/favicon.ico' ||
     pathname === '/login'

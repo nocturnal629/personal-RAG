@@ -37,7 +37,7 @@ async function embedOne(
 ): Promise<number[]> {
   try {
     const response = await ai.models.embedContent({
-      model: 'text-embedding-004',
+      model: 'gemini-embedding-001',
       contents: text,
       config: { taskType },
     })
@@ -64,7 +64,7 @@ export async function* chatStream(
   messages: GeminiMessage[]
 ): AsyncGenerator<string> {
   const stream = await ai.models.generateContentStream({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3.1-flash-lite',
     contents: messages as Content[],
     config: { systemInstruction: systemPrompt },
   })
