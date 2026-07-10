@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/db'
 import { runPipeline } from '@/lib/pipeline'
+import type { EmbeddingMode } from '@/lib/gemini'
 import { extractMarkdown } from '@/lib/extractors/markdown'
 import { extractPdf } from '@/lib/extractors/pdf'
 import { extractUrl } from '@/lib/extractors/url'
@@ -32,6 +33,7 @@ const JsonSchema = z.object({
   content: z.string().optional(),
   url: z.string().url().optional(),
   title: z.string().optional(),
+  embeddingMode: z.enum(['sequential', 'bulk']).optional(),
 })
 
 async function handleJsonBody(req: NextRequest): Promise<NextResponse> {
@@ -41,7 +43,7 @@ async function handleJsonBody(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
   }
 
-  const { type, content, url, title } = parsed.data
+  const { type, content, url, title, embeddingMode } = parsed.data
   const db = supabaseAdmin()
 
   let rawContent = ''
@@ -78,7 +80,7 @@ async function handleJsonBody(req: NextRequest): Promise<NextResponse> {
 
   // Run chunk → embed → store synchronously. The browser waits, but gains a
   // definitive success/failure response instead of having to poll for status.
-  await runPipeline(doc.id, rawContent)
+  await runPipeline(doc.id, rawContent, (embeddingMode ?? 'sequential') as EmbeddingMode)
 
   return NextResponse.json({ documentId: doc.id })
 }
@@ -89,6 +91,7 @@ async function handleFileUpload(req: NextRequest): Promise<NextResponse> {
   const formData = await req.formData()
   const file = formData.get('file') as File | null
   const titleOverride = formData.get('title') as string | null
+  const embeddingMode = (formData.get('embeddingMode') as EmbeddingMode | null) ?? 'sequential'
 
   if (!file) {
     return NextResponse.json({ error: 'No file provided' }, { status: 400 })
@@ -133,7 +136,7 @@ async function handleFileUpload(req: NextRequest): Promise<NextResponse> {
 
   if (error) throw new Error(`DB insert failed: ${error.message}`)
 
-  await runPipeline(doc.id, rawContent)
+  await runPipeline(doc.id, rawContent, embeddingMode)
 
   return NextResponse.json({ documentId: doc.id })
 }

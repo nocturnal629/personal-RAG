@@ -10,23 +10,29 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! })
 //   RETRIEVAL_QUERY    → when embedding the user's search question
 // Using the wrong task type measurably degrades recall.
 
+export type EmbeddingMode = 'sequential' | 'bulk'
+
 export async function embed(
   texts: string[],
-  taskType: 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY' = 'RETRIEVAL_DOCUMENT'
+  taskType: 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY' = 'RETRIEVAL_DOCUMENT',
+  mode: EmbeddingMode = 'sequential'
 ): Promise<number[][]> {
-  const results: number[][] = []
-
-  // Process in batches of 20 to stay within Gemini's free-tier rate limits.
-  // text-embedding-004 supports single-content calls; we loop for clarity.
-  const BATCH = 20
-  for (let i = 0; i < texts.length; i += BATCH) {
-    const batch = texts.slice(i, i + BATCH)
-    const batchResults = await Promise.all(
-      batch.map(text => embedOne(text, taskType))
-    )
-    results.push(...batchResults)
+  if (mode === 'bulk') {
+    // Parallel batches of 20 — faster but risks 429s on free-tier quotas.
+    const BATCH = 20
+    const results: number[][] = []
+    for (let i = 0; i < texts.length; i += BATCH) {
+      const batch = texts.slice(i, i + BATCH)
+      results.push(...(await Promise.all(batch.map(t => embedOne(t, taskType)))))
+    }
+    return results
   }
 
+  // Sequential: one at a time with exponential backoff — safe for free tier.
+  const results: number[][] = []
+  for (const text of texts) {
+    results.push(await embedOne(text, taskType))
+  }
   return results
 }
 
@@ -43,10 +49,14 @@ async function embedOne(
     })
     return response.embeddings?.[0]?.values ?? []
   } catch (err) {
-    // Retry once on transient network/rate errors before giving up
-    if (attempt === 0) {
-      await sleep(1000)
-      return embedOne(text, taskType, 1)
+    const status = (err as { status?: number }).status
+    const isRateLimit = status === 429
+    const maxAttempts = isRateLimit ? 4 : 1
+    if (attempt < maxAttempts) {
+      // Exponential backoff: 2s, 4s, 8s, 16s for rate limit; 1s for other errors
+      const delay = isRateLimit ? 2000 * 2 ** attempt : 1000
+      await sleep(delay)
+      return embedOne(text, taskType, attempt + 1)
     }
     throw err
   }

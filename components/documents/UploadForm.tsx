@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 type Tab = 'text' | 'url' | 'file'
+type EmbeddingMode = 'sequential' | 'bulk'
 
 export default function UploadForm() {
   const [tab, setTab] = useState<Tab>('text')
@@ -11,6 +12,7 @@ export default function UploadForm() {
   const [text, setText] = useState('')
   const [url, setUrl] = useState('')
   const [file, setFile] = useState<File | null>(null)
+  const [embeddingMode, setEmbeddingMode] = useState<EmbeddingMode>('sequential')
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
   const [message, setMessage] = useState('')
   const router = useRouter()
@@ -27,12 +29,13 @@ export default function UploadForm() {
         const fd = new FormData()
         fd.append('file', file)
         if (title) fd.append('title', title)
+        fd.append('embeddingMode', embeddingMode)
         res = await fetch('/api/ingest', { method: 'POST', body: fd })
       } else {
         const body =
           tab === 'text'
-            ? { type: 'text', content: text, title: title || undefined }
-            : { type: 'url', url, title: title || undefined }
+            ? { type: 'text', content: text, title: title || undefined, embeddingMode }
+            : { type: 'url', url, title: title || undefined, embeddingMode }
 
         res = await fetch('/api/ingest', {
           method: 'POST',
@@ -80,6 +83,35 @@ export default function UploadForm() {
             {t === 'file' ? 'File (PDF/MD/TXT)' : t.toUpperCase()}
           </button>
         ))}
+      </div>
+
+      {/* Embedding mode toggle */}
+      <div className="flex items-center gap-3 text-sm">
+        <span className="text-muted-foreground">Embedding mode:</span>
+        <div className="flex rounded-lg border border-border overflow-hidden">
+          {(['sequential', 'bulk'] as EmbeddingMode[]).map(mode => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setEmbeddingMode(mode)}
+              title={
+                mode === 'sequential'
+                  ? 'One chunk at a time — safe for free-tier quotas'
+                  : 'Parallel batches — faster but may hit rate limits'
+              }
+              className={`px-3 py-1.5 capitalize transition-colors ${
+                embeddingMode === mode
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {mode}
+            </button>
+          ))}
+        </div>
+        <span className="text-muted-foreground text-xs">
+          {embeddingMode === 'sequential' ? 'Safe for free tier' : 'Faster, may hit quota'}
+        </span>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-3">

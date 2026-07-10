@@ -1,5 +1,5 @@
 import { supabaseAdmin } from './db'
-import { embed } from './gemini'
+import { embed, type EmbeddingMode } from './gemini'
 import { chunkText } from './chunking'
 
 // Runs the full ingestion pipeline for a document that already has raw_content
@@ -7,7 +7,11 @@ import { chunkText } from './chunking'
 //
 // Steps: chunk → embed → bulk insert chunks → mark document ready
 // If anything fails, the document status is set to 'failed' with the error message.
-export async function runPipeline(documentId: string, rawContent: string): Promise<void> {
+export async function runPipeline(
+  documentId: string,
+  rawContent: string,
+  embeddingMode: EmbeddingMode = 'sequential'
+): Promise<void> {
   const db = supabaseAdmin()
 
   await db
@@ -21,7 +25,7 @@ export async function runPipeline(documentId: string, rawContent: string): Promi
     if (chunks.length === 0) throw new Error('No chunks produced — document may be empty')
 
     // 2. Embed all chunks. embed() processes in batches of 20 internally.
-    const embeddings = await embed(chunks.map(c => c.content), 'RETRIEVAL_DOCUMENT')
+    const embeddings = await embed(chunks.map(c => c.content), 'RETRIEVAL_DOCUMENT', embeddingMode)
 
     // 3. Bulk insert — one round trip instead of one per chunk
     const rows = chunks.map((chunk, i) => ({
